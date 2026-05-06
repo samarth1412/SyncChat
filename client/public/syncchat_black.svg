@@ -1,0 +1,9 @@
+<svg width="260" height="72" viewBox="0 0 260 72" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="syncchat-black-title">
+  <title id="syncchat-black-title">SyncChat</title>
+  <rect x="4" y="8" width="56" height="56" rx="16" fill="#111827"/>
+  <path d="M18 25C18 21.134 21.134 18 25 18H39C42.866 18 46 21.134 46 25V36C46 39.866 42.866 43 39 43H32.938L24.35 50.564C23.369 51.428 21.833 50.731 21.833 49.424V42.535C19.571 41.384 18 39.033 18 36V25Z" fill="white"/>
+  <circle cx="27" cy="31" r="2.8" fill="#111827"/>
+  <circle cx="32" cy="31" r="2.8" fill="#111827"/>
+  <circle cx="37" cy="31" r="2.8" fill="#111827"/>
+  <text x="74" y="45" fill="#111827" font-family="Outfit, Inter, Arial, sans-serif" font-size="32" font-weight="700">SyncChat</text>
+</svg>
