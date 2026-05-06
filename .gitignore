@@ -27,6 +27,9 @@ client/vite-dev.err.log
 *.local
 client/.env*
 server/.env*
+!.env.example
+!client/.env.example
+!server/.env.example
 
 # Editor and OS files
 .vscode/*
