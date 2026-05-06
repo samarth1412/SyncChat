@@ -238,19 +238,6 @@ node --check server.js
 node --check controllers/roomController.js
 ```
 
-## Production Upgrade Path
-
-These are the next engineering upgrades that would move SyncChat from single-instance realtime app to production-grade distributed system:
-
-- **Redis Pub/Sub + Socket.IO Redis adapter** for multi-server socket fanout.
-- **Protected socket handshake** that validates JWT before a socket joins rooms.
-- **Refresh-token rotation** with short-lived access tokens.
-- **Google OAuth** for lower-friction authentication.
-- **Persistent message model** for chat history, replay, and analytics.
-- **WebRTC audio/video calls** with signaling through Socket.IO.
-- **S3 or Cloudinary signed uploads** for stronger upload security.
-- **Automated tests** for API controllers and socket events.
-
 ## Deployment Notes
 
 - Set `FRONTEND_URL` on the server to the deployed client URL.
