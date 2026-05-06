@@ -6,6 +6,7 @@ import "dotenv/config";
 import http from "http";
 import { Server } from "socket.io";
 import path from "path";
+import crypto from "crypto";
 // Routes
 import authRouter from "./routes/authRoutes.js";
 import userRouter from "./routes/userRoutes.js";
@@ -54,14 +55,12 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!activeRooms[roomId]) {
-      activeRooms[roomId] = { participants: {}, timer: null };
-    }
+    if (!activeRooms[roomId]) activeRooms[roomId] = createRoomState();
 
     const roomData = activeRooms[roomId];
     const currentCount = Object.keys(roomData.participants).length;
 
-    if (currentCount >= room.maxParticipants) {
+    if (room.maxParticipants > 0 && currentCount >= room.maxParticipants) {
       socket.emit("roomFull", { message: "Room is full" });
       return;
     }
@@ -69,18 +68,26 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     socket.roomId = roomId;
     socket.userId = userId;
+    socket.presenceId = getPresenceId(userId, socket.id);
 
     const role =
       room.hostId && room.hostId.toString() === userId?.toString()
         ? "Host"
         : "Participant";
 
-    roomData.participants[socket.id] = {
+    const participant = {
       id: userId,
+      presenceId: socket.presenceId,
       socketId: socket.id,
       name: userName,
       role,
+      status: "online",
+      lastSeen: null,
     };
+
+    roomData.participants[socket.id] = participant;
+    roomData.presence[socket.presenceId] = participant;
+    socket.emit("presence:self", { presenceId: socket.presenceId });
 
     if (role === "Host") roomData.hostId = socket.id;
 
@@ -98,8 +105,7 @@ io.on("connection", (socket) => {
       }, 1000);
     }
 
-    const roomParticipants = Object.values(roomData.participants);
-    io.to(roomId).emit("updateParticipants", roomParticipants);
+    broadcastPresence(io, roomId);
 
     socket.emit("roomInfo", {
       name: room.roomName,
@@ -115,37 +121,89 @@ io.on("connection", (socket) => {
 
   // --- LEAVE ROOM ---
   socket.on("leaveRoom", (roomId, userName) => {
-    const roomData = activeRooms[roomId];
-    if (!roomData?.participants[socket.id]) return;
-
-    delete roomData.participants[socket.id];
-    const roomParticipants = Object.values(roomData.participants);
-
-    io.to(roomId).emit("updateParticipants", roomParticipants);
-    socket.to(roomId).emit("userLeft", `${userName} left the chat`);
-
-    if (roomParticipants.length === 0) {
-      if (roomData.timer) clearInterval(roomData.timer);
-      delete activeRooms[roomId];
-    }
-
-    socket.leave(roomId);
+    handleSocketDeparture(io, socket, roomId, userName);
   });
 
   // --- SEND MESSAGE ---
   socket.on("sendMessage", (data) => {
     const { roomId, userName, message, imageUrl, timestamp } = data;
-    if (!activeRooms[roomId]) {
+    const roomData = activeRooms[roomId];
+    if (!roomData) {
       socket.emit("errorMessage", "Room not found");
       return;
     }
 
+    const messageId = data.messageId || crypto.randomUUID();
+    const senderPresenceId =
+      socket.presenceId || getPresenceId(socket.userId, socket.id);
+    const onlineRecipients = Object.values(roomData.participants).filter(
+      (participant) => participant.socketId !== socket.id
+    );
+    const status = onlineRecipients.length > 0 ? "delivered" : "sent";
+
+    roomData.messages[messageId] = {
+      id: messageId,
+      senderPresenceId,
+      status,
+      seenBy: {},
+      deliveredTo: Object.fromEntries(
+        onlineRecipients.map((participant) => [
+          participant.presenceId,
+          new Date().toISOString(),
+        ])
+      ),
+    };
+
     io.to(roomId).emit("receiveMessage", {
+      id: messageId,
+      senderPresenceId,
       userName,
       message: message || "",
       imageUrl: imageUrl || null,
       timestamp: timestamp || new Date(),
+      status,
     });
+
+    socket.emit("messageStatusUpdated", {
+      messageId,
+      status,
+      deliveredTo: Object.keys(roomData.messages[messageId].deliveredTo),
+      seenBy: [],
+    });
+  });
+
+  // --- TYPING PRESENCE ---
+  socket.on("typing:start", ({ roomId }) => {
+    const roomData = activeRooms[roomId];
+    const participant = roomData?.participants[socket.id];
+    if (!roomData || !participant) return;
+
+    roomData.typing[participant.presenceId] = {
+      presenceId: participant.presenceId,
+      name: participant.name,
+      socketId: socket.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    broadcastTyping(io, roomId);
+  });
+
+  socket.on("typing:stop", ({ roomId }) => {
+    const roomData = activeRooms[roomId];
+    const participant = roomData?.participants[socket.id];
+    if (!roomData || !participant) return;
+
+    delete roomData.typing[participant.presenceId];
+    broadcastTyping(io, roomId);
+  });
+
+  // --- DELIVERY AND READ RECEIPTS ---
+  socket.on("messageDelivered", ({ roomId, messageId }) => {
+    updateMessageReceipt(io, socket, roomId, messageId, "delivered");
+  });
+
+  socket.on("messageSeen", ({ roomId, messageId }) => {
+    updateMessageReceipt(io, socket, roomId, messageId, "seen");
   });
 
   // --- CLOSE SESSION (HOST) ---
@@ -165,26 +223,113 @@ io.on("connection", (socket) => {
   // --- DISCONNECT ---
   socket.on("disconnect", () => {
     const roomId = socket.roomId;
-    if (!roomId || !activeRooms[roomId]) return;
-
-    const userInfo = activeRooms[roomId].participants[socket.id];
-    delete activeRooms[roomId].participants[socket.id];
-
-    const roomParticipants = Object.values(activeRooms[roomId].participants);
-    io.to(roomId).emit("updateParticipants", roomParticipants);
-
-    if (userInfo?.name) {
-      socket.to(roomId).emit("userLeft", `${userInfo.name} left the chat`);
-    }
-
-    if (roomParticipants.length === 0) {
-      if (activeRooms[roomId].timer) clearInterval(activeRooms[roomId].timer);
-      delete activeRooms[roomId];
-    }
+    handleSocketDeparture(io, socket, roomId);
   });
 });
 
 // Helper: Format session time
+
+function createRoomState() {
+  return {
+    participants: {},
+    presence: {},
+    typing: {},
+    messages: {},
+    timer: null,
+    hostId: null,
+  };
+}
+
+function getPresenceId(userId, socketId) {
+  return userId ? `user:${userId}` : `guest:${socketId}`;
+}
+
+function broadcastPresence(io, roomId) {
+  const roomData = activeRooms[roomId];
+  if (!roomData) return;
+  io.to(roomId).emit("updateParticipants", Object.values(roomData.presence));
+  io.to(roomId).emit("presenceUpdated", Object.values(roomData.presence));
+}
+
+function broadcastTyping(io, roomId) {
+  const roomData = activeRooms[roomId];
+  if (!roomData) return;
+  io.to(roomId).emit("typing:update", Object.values(roomData.typing));
+}
+
+function handleSocketDeparture(io, socket, roomId, explicitUserName) {
+  const roomData = activeRooms[roomId];
+  if (!roomId || !roomData?.participants[socket.id]) return;
+
+  const participant = roomData.participants[socket.id];
+  const lastSeen = new Date().toISOString();
+
+  delete roomData.participants[socket.id];
+  delete roomData.typing[participant.presenceId];
+
+  roomData.presence[participant.presenceId] = {
+    ...participant,
+    status: "offline",
+    lastSeen,
+  };
+
+  broadcastPresence(io, roomId);
+  broadcastTyping(io, roomId);
+
+  const displayName = explicitUserName || participant.name;
+  if (displayName) {
+    socket.to(roomId).emit("userLeft", `${displayName} left the chat`);
+  }
+
+  const onlineCount = Object.keys(roomData.participants).length;
+  if (onlineCount === 0) {
+    if (roomData.timer) clearInterval(roomData.timer);
+    delete activeRooms[roomId];
+  }
+
+  socket.leave(roomId);
+}
+
+function updateMessageReceipt(io, socket, roomId, messageId, receiptType) {
+  const roomData = activeRooms[roomId];
+  const participant = roomData?.participants[socket.id];
+  const messageState = roomData?.messages[messageId];
+  if (!roomData || !participant || !messageState) return;
+
+  const now = new Date().toISOString();
+
+  if (receiptType === "delivered") {
+    messageState.deliveredTo[participant.presenceId] = now;
+  }
+
+  if (receiptType === "seen") {
+    messageState.deliveredTo[participant.presenceId] = now;
+    messageState.seenBy[participant.presenceId] = now;
+  }
+
+  const nextStatus =
+    Object.keys(messageState.seenBy).length > 0
+      ? "seen"
+      : Object.keys(messageState.deliveredTo).length > 0
+      ? "delivered"
+      : "sent";
+
+  messageState.status = nextStatus;
+
+  const senderSocket = Object.values(roomData.participants).find(
+    (activeParticipant) =>
+      activeParticipant.presenceId === messageState.senderPresenceId
+  );
+
+  if (senderSocket) {
+    io.to(senderSocket.socketId).emit("messageStatusUpdated", {
+      messageId,
+      status: nextStatus,
+      deliveredTo: Object.keys(messageState.deliveredTo),
+      seenBy: Object.keys(messageState.seenBy),
+    });
+  }
+}
 
 function formatRemainingTime(ms) {
   const totalSeconds = Math.floor(ms / 1000);

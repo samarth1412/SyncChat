@@ -25,6 +25,9 @@ The project is split into a React/Vite frontend and an Express/Socket.IO backend
 
 - Host-created temporary rooms with custom name, description, duration, participant limit, and image-upload permission.
 - Real-time chat powered by Socket.IO rooms.
+- Live user presence with online/offline state and last-seen timestamps.
+- Typing indicators for active participants in the current room.
+- Message delivery states for outgoing messages: sent, delivered, and seen.
 - Guest joining by room ID without requiring a full account.
 - JWT authentication with secure cookie support.
 - Email verification and password reset via OTP.
@@ -190,9 +193,16 @@ Open `http://localhost:5173`.
 | `joinRoom` | Client to server | Join a Socket.IO room |
 | `leaveRoom` | Client to server | Leave the active room |
 | `sendMessage` | Client to server | Send a text or image message |
+| `typing:start` | Client to server | Mark the user as actively typing |
+| `typing:stop` | Client to server | Clear the user's typing state |
+| `messageDelivered` | Client to server | Acknowledge message delivery |
+| `messageSeen` | Client to server | Acknowledge that a message was seen |
 | `closeSession` | Client to server | Host closes the room |
 | `receiveMessage` | Server to client | Broadcast a new message |
 | `updateParticipants` | Server to client | Sync participant list |
+| `presenceUpdated` | Server to client | Sync online/offline and last-seen state |
+| `typing:update` | Server to client | Broadcast active typing users |
+| `messageStatusUpdated` | Server to client | Sync sent/delivered/seen state |
 | `roomInfo` | Server to client | Send room metadata and upload permissions |
 | `sessionTimer` | Server to client | Update remaining session time |
 | `sessionEnded` | Server to client | Notify clients that the room is closed |
@@ -224,6 +234,11 @@ Current note: the server has a placeholder `npm test` script and does not includ
 ## Roadmap
 
 - Private direct messages
+- Protected socket handshake using verified JWTs
+- Refresh tokens and Google OAuth
+- Redis Pub/Sub with the Socket.IO Redis adapter for multi-instance scaling
+- WebRTC one-to-one audio/video calls
+- Drag-and-drop file upload previews and downloads
 - Moderator roles and permissions
 - Message reactions
 - Room transcripts or export

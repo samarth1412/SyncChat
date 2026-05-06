@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
-import { Send, Menu, X } from "lucide-react";
+import { Check, CheckCheck, Send, Menu, X } from "lucide-react";
 import InviteModal from "../components/InviteModal";
 import { toast } from "react-toastify";
 import { Upload } from "lucide-react";
@@ -21,6 +21,8 @@ const Chatroom = () => {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [typingUsers, setTypingUsers] = useState([]);
+  const [currentPresenceId, setCurrentPresenceId] = useState(null);
   const [allowUploads, setAllowUploads] = useState(false);
   const [roomInfo, setRoomInfo] = useState({
     name: "",
@@ -32,12 +34,18 @@ const Chatroom = () => {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const messagesEndRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const currentPresenceIdRef = useRef(null);
 
   // Auto scroll
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
   useEffect(() => scrollToBottom(), [messages]);
+
+  useEffect(() => {
+    currentPresenceIdRef.current = currentPresenceId;
+  }, [currentPresenceId]);
 
   // Listen for roomInfo from server
   useEffect(() => {
@@ -105,6 +113,14 @@ const Chatroom = () => {
 
     const handleReceiveMessage = (data) => {
       setMessages((prev) => [...prev, data]);
+      const isOwnMessage =
+        data.senderPresenceId === currentPresenceIdRef.current ||
+        data.userName === userName;
+
+      if (!isOwnMessage) {
+        newSocket.emit("messageDelivered", { roomId, messageId: data.id });
+        newSocket.emit("messageSeen", { roomId, messageId: data.id });
+      }
     };
 
     const handleUserJoined = (msg) => {
@@ -139,8 +155,31 @@ const Chatroom = () => {
 
       // Force React re-render with fresh array instance
       setTimeout(() => {
-        setParticipants([...validList]);
+        setParticipants(
+          [...validList].sort((a, b) => {
+            if (a.status === b.status) return a.name.localeCompare(b.name);
+            return a.status === "online" ? -1 : 1;
+          })
+        );
       }, 100);
+    };
+
+    const handleSelfPresence = ({ presenceId }) => {
+      currentPresenceIdRef.current = presenceId;
+      setCurrentPresenceId(presenceId);
+    };
+
+    const handleTypingUpdate = (list) => {
+      const activeTypingUsers = (list || []).filter(
+        (item) => item.socketId !== newSocket.id
+      );
+      setTypingUsers(activeTypingUsers);
+    };
+
+    const handleMessageStatusUpdated = ({ messageId, status }) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, status } : msg))
+      );
     };
 
     const handleRoomInfo = (info) => {
@@ -158,9 +197,13 @@ const Chatroom = () => {
 
     //Attach listeners
     newSocket.on("receiveMessage", handleReceiveMessage);
+    newSocket.on("presence:self", handleSelfPresence);
     newSocket.on("userJoined", handleUserJoined);
     newSocket.on("userLeft", handleUserLeft);
     newSocket.on("updateParticipants", handleUpdateParticipants);
+    newSocket.on("presenceUpdated", handleUpdateParticipants);
+    newSocket.on("typing:update", handleTypingUpdate);
+    newSocket.on("messageStatusUpdated", handleMessageStatusUpdated);
     newSocket.on("roomInfo", handleRoomInfo);
     newSocket.on("sessionTimer", handleSessionTimer);
     newSocket.on("sessionEnded", handleSessionEnded);
@@ -175,17 +218,43 @@ const Chatroom = () => {
     //Cleanup function - remove ALL listeners
     return () => {
       newSocket.off("receiveMessage", handleReceiveMessage);
+      newSocket.off("presence:self", handleSelfPresence);
       newSocket.off("userJoined", handleUserJoined);
       newSocket.off("userLeft", handleUserLeft);
       newSocket.off("updateParticipants", handleUpdateParticipants);
+      newSocket.off("presenceUpdated", handleUpdateParticipants);
+      newSocket.off("typing:update", handleTypingUpdate);
+      newSocket.off("messageStatusUpdated", handleMessageStatusUpdated);
       newSocket.off("roomInfo", handleRoomInfo);
       newSocket.off("sessionTimer", handleSessionTimer);
       newSocket.off("sessionEnded", handleSessionEnded);
 
       newSocket.emit("leaveRoom", roomId, userName);
+      newSocket.emit("typing:stop", { roomId });
       newSocket.disconnect();
     };
   }, [roomId, userName, userId, navigate]);
+
+  const stopTyping = () => {
+    if (!socket) return;
+    socket.emit("typing:stop", { roomId });
+  };
+
+  const handleMessageChange = (e) => {
+    const nextMessage = e.target.value;
+    setMessage(nextMessage);
+
+    if (!socket) return;
+
+    if (nextMessage.trim()) {
+      socket.emit("typing:start", { roomId });
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(stopTyping, 1200);
+    } else {
+      clearTimeout(typingTimeoutRef.current);
+      stopTyping();
+    }
+  };
 
   const sendMessage = () => {
     if (!message.trim() || !socket) return;
@@ -198,6 +267,8 @@ const Chatroom = () => {
     };
 
     socket.emit("sendMessage", messageData);
+    socket.emit("typing:stop", { roomId });
+    clearTimeout(typingTimeoutRef.current);
     setMessage("");
   };
 
@@ -238,7 +309,54 @@ const Chatroom = () => {
       minute: "2-digit",
     });
 
+  const formatLastSeen = (date) => {
+    if (!date) return "Offline";
+    const diffMs = Date.now() - new Date(date).getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return "Last seen just now";
+    if (diffMinutes < 60) return `Last seen ${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `Last seen ${diffHours}h ago`;
+    return `Last seen ${new Date(date).toLocaleDateString()}`;
+  };
+
+  const getTypingLabel = () => {
+    if (typingUsers.length === 0) return "";
+    if (typingUsers.length === 1) return `${typingUsers[0].name} is typing...`;
+    if (typingUsers.length === 2) {
+      return `${typingUsers[0].name} and ${typingUsers[1].name} are typing...`;
+    }
+    return "Several people are typing...";
+  };
+
+  const renderMessageStatus = (status) => {
+    if (status === "seen") {
+      return (
+        <span className="inline-flex items-center gap-1 text-[#9074DB]">
+          <CheckCheck className="h-3 w-3" />
+          Seen
+        </span>
+      );
+    }
+    if (status === "delivered") {
+      return (
+        <span className="inline-flex items-center gap-1">
+          <CheckCheck className="h-3 w-3" />
+          Delivered
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Check className="h-3 w-3" />
+        Sent
+      </span>
+    );
+  };
+
   const isHost = roomInfo.hostId === userId;
+  const onlineCount = participants.filter((p) => p.status === "online").length;
+  const typingLabel = getTypingLabel();
 
   return (
     <>
@@ -271,7 +389,20 @@ const Chatroom = () => {
                         ? p.name.charAt(0).toUpperCase() + p.name.slice(1)
                         : "Unknown"}
                     </p>
-                    <p className="text-xs text-gray-500">{p.role}</p>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          p.status === "online"
+                            ? "bg-emerald-500"
+                            : "bg-gray-300"
+                        }`}
+                      />
+                      <p className="text-xs text-gray-500">
+                        {p.status === "online"
+                          ? `${p.role} - Online`
+                          : formatLastSeen(p.lastSeen)}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))
@@ -341,7 +472,7 @@ const Chatroom = () => {
                 {/* Participants List */}
                 <div className="flex-1 overflow-y-auto p-4">
                   <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">
-                    Participants ({participants.length})
+                    Participants ({onlineCount} online)
                   </h3>
                   {participants.map((p, i) => (
                     <motion.div
@@ -357,7 +488,20 @@ const Chatroom = () => {
                           {p.name &&
                             p.name.charAt(0).toUpperCase() + p.name.slice(1)}
                         </p>
-                        <p className="text-xs text-gray-500">{p.role}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`h-2 w-2 rounded-full ${
+                              p.status === "online"
+                                ? "bg-emerald-500"
+                                : "bg-gray-300"
+                            }`}
+                          />
+                          <p className="text-xs text-gray-500">
+                            {p.status === "online"
+                              ? `${p.role} - Online`
+                              : formatLastSeen(p.lastSeen)}
+                          </p>
+                        </div>
                       </div>
                     </motion.div>
                   ))}
@@ -422,6 +566,9 @@ const Chatroom = () => {
               <h1 className="text-base sm:text-md font-medium text-gray-500">
                 {roomInfo.name || "Chatroom"}
               </h1>
+              <span className="text-xs text-emerald-600">
+                {onlineCount} online
+              </span>
             </div>
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-600 pr-3">
@@ -438,6 +585,9 @@ const Chatroom = () => {
                 <h1 className="text-sm font-medium text-gray-700">
                   {roomInfo.name || "Chatroom"}
                 </h1>
+                <span className="text-xs text-emerald-600">
+                  {onlineCount} online
+                </span>
               </div>
               <span className="text-xs text-gray-500">
                 ID: {roomInfo.meetingId}
@@ -476,7 +626,8 @@ const Chatroom = () => {
                           )}
 
                           <p className="text-xs text-gray-500 mt-1 text-right">
-                            {formatTime(msg.timestamp)}
+                            {formatTime(msg.timestamp)} -{" "}
+                            {renderMessageStatus(msg.status)}
                           </p>
                         </div>
                         <img
@@ -531,6 +682,11 @@ const Chatroom = () => {
 
             {/* Input Area */}
             <div className="border-t border-gray-100 p-3 sm:p-4 bg-white shrink-0">
+              {typingLabel && (
+                <p className="text-xs text-[#9074DB] mb-2 px-2">
+                  {typingLabel}
+                </p>
+              )}
               <div className="flex items-center w-full gap-2 sm:gap-3">
                 {allowUploads && (
                   <label htmlFor="photoUpload" className="cursor-pointer">
@@ -547,7 +703,7 @@ const Chatroom = () => {
                 <input
                   type="text"
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={handleMessageChange}
                   onKeyPress={handleKeyPress}
                   placeholder="Message"
                   className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 bg-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-[#9074DB] text-xs sm:text-sm placeholder:text-gray-400"

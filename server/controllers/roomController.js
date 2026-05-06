@@ -117,7 +117,7 @@ export const joinRoom = async (req, res) => {
     }
 
     //implement the maxParticipant count using socket.io here after configuring it
-    const currentTotalParticipants = getActiveRoomCount(roomId);
+    const currentTotalParticipants = getActiveRoomCount(room.roomId);
     if (
       room.maxParticipants > 0 &&
       currentTotalParticipants >= room.maxParticipants
