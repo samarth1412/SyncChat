@@ -65,26 +65,23 @@ const HeroSection = () => {
             {/*Mobile view*/}
             <div className="cursor-pointer font-medium sm:hidden text-sm hover:text-ghost">
               {userData ? (
-                <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full flex items-center justify-center cursor-pointer relative group ">
-                  <img src="/avatar.png" alt="Avatar" />
-                  <div className="absolute hidden group-hover:block top-0 right-o z-10 text-black rounded-3xl pt-10">
-                    <ul className="list-none m-0 p-2 bg-gray-100 text-sm">
-                      {!userData.isAccountVerified && (
-                        <li
-                          onClick={sendVerificationOtp}
-                          className="py-1 px-2 hover:bg-gray-200 cursor-pointer"
-                        >
-                          Verify Email
-                        </li>
-                      )}
-                      <li
-                        onClick={logOut}
-                        className="py-1 px-2 hover:bg-gray-200 cursor-pointer pr-10"
-                      >
-                        LogOut
-                      </li>
-                    </ul>
-                  </div>
+                <div className="flex items-center gap-3">
+                  {!userData.isAccountVerified && (
+                    <button
+                      type="button"
+                      onClick={sendVerificationOtp}
+                      className="text-xs text-ghost font-medium"
+                    >
+                      Verify Email
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={logOut}
+                    className="w-8 h-8 rounded-full flex items-center justify-center"
+                  >
+                    <img src="/avatar.png" alt="Avatar" />
+                  </button>
                 </div>
               ) : (
                 <button
@@ -118,6 +115,18 @@ const HeroSection = () => {
               Join a Room
             </motion.button>
 
+            {userData && !userData.isAccountVerified && (
+              <motion.button
+                initial={{ scale: 1 }}
+                whileHover={{ scale: 1.2 }}
+                transition={{ duration: 0.5 }}
+                onClick={sendVerificationOtp}
+                className="cursor-pointer text-sm font-medium text-ghost hover:text-purple-600"
+              >
+                Verify Email
+              </motion.button>
+            )}
+
             {userData ? (
               <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full flex items-center justify-center cursor-pointer relative group ">
                 <motion.img
@@ -129,14 +138,6 @@ const HeroSection = () => {
                 />
                 <div className="absolute hidden group-hover:block top-0 right-o z-10 text-black rounded-3xl pt-10">
                   <ul className="list-none m-0 p-2 bg-gray-100 text-sm">
-                    {!userData.isAccountVerified && (
-                      <li
-                        onClick={sendVerificationOtp}
-                        className="py-1 px-2 hover:bg-gray-200 cursor-pointer"
-                      >
-                        Verify Email
-                      </li>
-                    )}
                     <li
                       onClick={logOut}
                       className="py-1 px-2 hover:bg-gray-200 cursor-pointer pr-10"
