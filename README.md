@@ -238,30 +238,3 @@ node --check server.js
 node --check controllers/roomController.js
 ```
 
-## Deployment Notes
-
-Deploy SyncChat as two services:
-
-1. **Backend on Render**
-   - Connect the GitHub repository.
-   - Use the included `render.yaml` blueprint, or create a Web Service manually.
-   - Root directory: `server`
-   - Build command: `npm install`
-   - Start command: `npm start`
-   - Add the variables from `server/.env.example`.
-
-2. **Frontend on Vercel**
-   - Import the same GitHub repository.
-   - Root directory: `client`
-   - Build command: `npm run build`
-   - Output directory: `dist`
-   - Add `VITE_BACKEND_URL` using the deployed Render backend URL.
-
-3. **Final URL wiring**
-   - Set `FRONTEND_URL` on Render to the deployed Vercel client URL.
-   - Redeploy the backend after setting `FRONTEND_URL`.
-   - In production, auth cookies use `secure: true` and `sameSite: "none"`, so both frontend and backend must use HTTPS.
-
-## License
-
-This project is currently unlicensed. Add a license before distributing or accepting external contributions.
